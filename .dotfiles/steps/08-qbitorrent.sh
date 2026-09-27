@@ -1,6 +1,14 @@
 #!/bin/bash
+set -u
 
 CONFIG="$SCRIPT_DIR/files/user/qBittorrent"
+
+# Fail fast once, instead of letting every user/path iteration below
+# attempt a `cp -r` from a source that doesn't exist.
+if [[ ! -d "$CONFIG" ]]; then
+    echo "Missing source config: $CONFIG" >&2
+    exit 1
+fi
 
 for home in /home/*; do
     [[ -d "$home" ]] || continue

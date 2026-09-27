@@ -4,7 +4,6 @@ set -u
 PROFILE="cl7mquq4.default"
 PROFILE2="hnb58kl4.default-release"
 
-SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 DOTFILES="$SCRIPT_DIR/files/user/mozilla/firefox"
 
 # Extract the user_pref key from a line, no subprocess spawned.

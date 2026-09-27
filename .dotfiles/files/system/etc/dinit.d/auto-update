@@ -1,0 +1,8 @@
+type          = process
+command       = /usr/local/bin/auto-update.sh
+log-type      = buffer
+waits-for     = network.target
+restart       = true
+restart-delay = 3600 # 1 hour
+nice 		  = 19
+ioprio        = idle

@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+PING_HOST="1.1.1.1"
+PING_COUNT=5
+PING_MAX_MS=50
+TOP_N=5
+
+DOWNLOAD_WEIGHT=60
+PING_WEIGHT=30
+UPLOAD_WEIGHT=10
+DOWNLOAD_SATURATION=400
+UPLOAD_SATURATION=200
+
+DL=""
+UL=""
+PG=""
+CURRENT_VPN=""
+TOTAL_VPNS=0
+TEST_INDEX=0
+
+LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/vpn-speedtest"
+mkdir -p "$LOG_DIR"
+
+RUN_ID=$(date +%Y%m%d-%H%M%S)
+LOG_FILE="$LOG_DIR/run-$RUN_ID.log"
+
+declare -A DISQ_PREFIXES=()
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "=== VPN Ookla Speedtest run $RUN_ID started: $(date) ==="
+echo "Log file: $LOG_FILE"
+
+cleanup_old_logs() {
+    find "$LOG_DIR" -type f -name 'run-*.log' \
+        ! -name "$(basename "$LOG_FILE")" -delete
+}
+
+check_ookla() {
+    command -v speedtest >/dev/null || { echo "Ookla Speedtest CLI not found."; exit 1; }
+    speedtest --version 2>/dev/null | grep -qi ookla || { echo "speedtest is not Ookla."; exit 1; }
+    command -v jq >/dev/null || { echo "jq required: sudo apt install jq"; exit 1; }
+}
+
+get_vpn_connections() {
+    nmcli -t -f NAME,TYPE connection show | awk -F: '$2=="vpn"{print $1}'
+}
+
+get_prefix() {
+    [[ "$1" == *_* ]] && printf '%s_' "${1%%_*}"
+}
+
+disconnect_other_vpns() {
+    local except="${1:-}" name
+
+    while IFS= read -r name; do
+        [[ -n "$except" && "$name" == "$except" ]] && continue
+        nmcli connection down "$name" >/dev/null 2>&1 || true
+    done < <(nmcli -t -f NAME,TYPE connection show --active | awk -F: '$2=="vpn"{print $1}')
+}
+
+
+wait_for_connection() {
+    local name="$1" tries=15 state
+
+    while ((tries--)); do
+        state=$(nmcli -t -f GENERAL.STATE connection show "$name" 2>/dev/null)
+        [[ "$state" == *activated* ]] && return 0
+        sleep 1
+    done
+
+    return 1
+}
+
+wait_for_connection_test() {
+    timeout 10 curl -fsS --connect-timeout 5 -o /dev/null https://1.1.1.1/cdn-cgi/trace
+}
+
+measure_ping() {
+    ping -c "$PING_COUNT" -W 2 "$PING_HOST" 2>/dev/null |
+        awk -F'/' '/rtt|round-trip/{printf "%.0f",$5}'
+}
+
+measure_ookla() {
+    local json
+
+    json=$(timeout 60 speedtest --accept-license --accept-gdpr --format=json 2>/dev/null) || return 1
+    [[ -n "$json" ]] || return 1
+
+    DL=$(jq -r '.download.bandwidth * 8 / 1000000' <<<"$json")
+    UL=$(jq -r '.upload.bandwidth * 8 / 1000000' <<<"$json")
+    PG=$(jq -r '.ping.latency' <<<"$json")
+
+    [[ "$DL" != null && "$UL" != null && "$PG" != null ]]
+}
+
+test_connection() {
+    local name="$1" label="$2" prefix
+
+    DL=""
+    UL=""
+    PG=""
+    CURRENT_VPN="$name"
+
+    prefix=$(get_prefix "$name")
+
+    if [[ -n "$prefix" && -n "${DISQ_PREFIXES[$prefix]:-}" ]]; then
+        echo "$name|FAILED|-|-|-"
+        echo "$label skipped (failed prefix)"
+        return
+    fi
+
+    echo
+    echo "$label"
+    echo "  Disconnecting other VPNs"
+    disconnect_other_vpns
+
+    echo "  Connecting"
+    if ! timeout 10 nmcli connection up "$name" >/dev/null 2>&1; then
+        echo "$name|FAILED|-|-|-"
+        return
+    fi
+
+    echo "  Waiting activation"
+    if ! wait_for_connection "$name"; then
+        nmcli connection down "$name" >/dev/null 2>&1
+        echo "$name|FAILED|-|-|-"
+        return
+    fi
+
+    echo "  Checking internet"
+    if ! wait_for_connection_test; then
+        nmcli connection down "$name" >/dev/null 2>&1
+        echo "$name|FAILED|-|-|-"
+        return
+    fi
+
+    echo "  Measuring ping"
+    PG=$(measure_ping)
+
+    if [[ -z "$PG" ]]; then
+        nmcli connection down "$name" >/dev/null 2>&1
+        echo "$name|FAILED|-|-|-"
+        return
+    fi
+
+    if ((PG > PING_MAX_MS)); then
+        nmcli connection down "$name" >/dev/null 2>&1
+        [[ -n "$prefix" ]] && DISQ_PREFIXES["$prefix"]="$name"
+        echo "$name|FAILED|-|-|$PG"
+        return
+    fi
+
+    echo "  Running Ookla"
+    if ! measure_ookla; then
+        nmcli connection down "$name" >/dev/null 2>&1
+        echo "$name|FAILED|-|-|-"
+        return
+    fi
+
+    nmcli connection down "$name" >/dev/null 2>&1
+
+    echo "  Result: ↓${DL} Mbps ↑${UL} Mbps ${PG} ms"
+    echo "$name|OK|$DL|$UL|$PG"
+}
+
+run_tests() {
+    local connections name
+
+    check_ookla
+
+    mapfile -t connections < <(get_vpn_connections)
+    TOTAL_VPNS=${#connections[@]}
+
+    echo
+    echo "Using Ookla Speedtest CLI"
+    echo "VPN connections found: $TOTAL_VPNS"
+
+    ((TOTAL_VPNS)) || { echo "No VPN connections found."; exit 1; }
+
+    disconnect_other_vpns
+
+    TEST_INDEX=0
+
+    for name in "${connections[@]}"; do
+        test_connection "$name" "[$((TEST_INDEX+1))/$TOTAL_VPNS] $name"
+        ((TEST_INDEX++))
+    done
+
+    disconnect_other_vpns
+}
+
+compute_scores() {
+    awk -F'|' \
+        -v max_ping="$PING_MAX_MS" \
+        -v dw="$DOWNLOAD_WEIGHT" \
+        -v pw="$PING_WEIGHT" \
+        -v uw="$UPLOAD_WEIGHT" \
+        -v ds="$DOWNLOAD_SATURATION" \
+        -v us="$UPLOAD_SATURATION" '
+    $2=="OK" && $5<=max_ping {
+        d=($3/($3+ds))*100
+        p=(1-($5/max_ping))*100
+        u=($4/($4+us))*100
+        s=(d*dw/100)+(p*pw/100)+(u*uw/100)
+        printf "%s|%.3f|%.3f|%.3f|%.3f\n",$1,s,$3,$4,$5
+    }' "$LOG_FILE" | sort -t'|' -k2,2nr
+}
+
+show_ranking_and_prune() {
+    local ranked name score dl ul pg rank=0
+    local -a all_names=() keep_names=()
+
+    ranked=$(compute_scores)
+
+    if [[ -z "$ranked" ]]; then
+        echo "No valid Ookla results."
+        return
+    fi
+
+    echo
+    echo "=== VPN Ranking ==="
+    printf "%-5s %-35s %12s %12s %10s %10s\n" \
+        "Rank" "VPN" "Download" "Upload" "Ping" "Score"
+
+    while IFS='|' read -r name score dl ul pg; do
+        ((rank++))
+        all_names+=("$name")
+
+        ((rank<=TOP_N)) && keep_names+=("$name")
+
+        printf "%-5s %-35s %12s %12s %10s %10s\n" \
+            "$rank" "$name" "$dl" "$ul" "$pg" "$score"
+    done <<< "$ranked"
+
+    (( ${#all_names[@]} > TOP_N )) || return
+
+    echo
+    echo "Keep top $TOP_N VPNs and delete the rest? [y/N]"
+    read -r answer
+
+    [[ "$answer" =~ ^[Yy]$ ]] || return
+
+    for name in "${all_names[@]}"; do
+        [[ " ${keep_names[*]} " =~ " $name " ]] || {
+            echo "Deleting: $name"
+            nmcli connection delete "$name" >/dev/null 2>&1
+        }
+    done
+
+    echo "Pruning complete."
+}
+
+cleanup() {
+    cleanup_old_logs
+    echo "=== Run finished: $(date) ==="
+}
+
+handle_interrupt() {
+    echo
+    echo "Interrupted."
+    disconnect_other_vpns
+    exit 130
+}
+
+trap handle_interrupt INT
+trap cleanup EXIT
+
+main() {
+    command -v nmcli >/dev/null || { echo "nmcli not found"; exit 1; }
+
+    run_tests
+    show_ranking_and_prune
+
+    notify-send \
+        "VPN Ookla Speedtest" \
+        "Finished testing $TOTAL_VPNS connections." \
+        2>/dev/null || true
+}
+
+main

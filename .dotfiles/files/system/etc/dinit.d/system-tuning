@@ -1,0 +1,5 @@
+type        = process
+command     = /usr/local/bin/system-tuning.sh
+log-type    = buffer
+waits-for   = dbus
+restart     = false

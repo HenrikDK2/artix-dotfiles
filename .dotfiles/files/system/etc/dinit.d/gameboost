@@ -1,0 +1,7 @@
+type          = process
+command       = /usr/local/bin/gameboost/main.sh
+log-type      = buffer
+waits-for     = login.target
+restart       = true
+nice 		  = 19
+ioprio        = idle

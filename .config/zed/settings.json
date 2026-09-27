@@ -1,0 +1,84 @@
+{
+	"cli_default_open_behavior": "existing_window",
+	"outline_panel": {
+		"dock": "left",
+	},
+	"collaboration_panel": {
+		"dock": "left",
+	},
+	"agent": {
+		"dock": "right",
+		"favorite_models": [],
+		"model_parameters": [],
+	},
+	"git_panel": {
+		"dock": "left",
+	},
+	"disable_ai": true,
+	"ui_font_weight": 500.0,
+	"ui_font_family": ".ZedSans",
+	"theme": "One Dark",
+	"icon_theme": "Material Icon Theme",
+	"telemetry": {
+		"diagnostics": false,
+		"metrics": false,
+	},
+	"ui_font_size": 20.0,
+	"buffer_font_size": 20.0,
+	"buffer_line_height": { "custom": 1.4 },
+	"toolbar": { "breadcrumbs": false, "quick_actions": false },
+	"project_panel": { "dock": "left", "entry_spacing": "comfortable" },
+	"tabs": { "file_icons": true },
+	"terminal": { "default_height": 350 },
+	"current_line_highlight": "none",
+	"hard_tabs": true,
+	"tab_size": 4,
+	"format_on_save": "on",
+	"inlay_hints": {
+		"enabled": false,
+		"show_type_hints": false,
+		"show_parameter_hints": false,
+		"show_other_hints": false,
+	},
+	"diagnostics": {
+		"inline": {
+			"enabled": true,
+		},
+	},
+	"git": {
+		"inline_blame": {
+			"enabled": false,
+		},
+	},
+
+	"languages": {
+		"C": {
+			"format_on_save": "on",
+			"formatter": {
+				"external": {
+					"command": "uncrustify",
+					"arguments": [
+						"-c",
+						".uncrustify.cfg",
+						"--assume",
+						"{buffer_path}",
+					],
+				},
+			},
+		},
+		"C++": {
+			"format_on_save": "on",
+			"formatter": {
+				"external": {
+					"command": "uncrustify",
+					"arguments": [
+						"-c",
+						".uncrustify.cfg",
+						"--assume",
+						"{buffer_path}",
+					],
+				},
+			},
+		},
+	},
+}

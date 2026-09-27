@@ -1,0 +1,124 @@
+#!/bin/bash
+
+readonly FFXI_DIR="$HOME/Games/steamapps/common/FFXIPAL"
+readonly BACKUP_DIR="$HOME/FFXI_BACKUP"
+readonly PREFIX_DIR="$HOME/Games/steamapps/compatdata/230350/pfx"
+readonly BACKUP_ARCHIVE="$HOME/FFXI_BACKUP.7z"
+readonly POL_DIR="SquareEnix/FINAL FANTASY XI"
+
+if [ ! -d "$FFXI_DIR" ]; then
+	echo "FFXI isn't installed"
+	exit 1
+fi
+
+# Clean previous temporary backup
+rm -rf "$BACKUP_DIR" "$BACKUP_ARCHIVE"
+mkdir -p "$BACKUP_DIR"
+
+echo "Creating FFXI backup..."
+
+# ----------------------------------------------------------------------
+# Backup Windower
+# ----------------------------------------------------------------------
+
+if [ -d "$FFXI_DIR/Windower" ]; then
+	cp -f "$FFXI_DIR/settings.xml" "$BACKUP_DIR/" 2>/dev/null
+	cp -rf "$FFXI_DIR/Windower" "$BACKUP_DIR/"
+fi
+
+# ----------------------------------------------------------------------
+# Backup USER macros/settings
+# ----------------------------------------------------------------------
+
+mkdir -p "$BACKUP_DIR/$POL_DIR"
+
+if [ -d "$FFXI_DIR/$POL_DIR/USER" ]; then
+	cp -rf \
+		"$FFXI_DIR/$POL_DIR/USER" \
+		"$BACKUP_DIR/$POL_DIR/"
+fi
+
+for tools in "$FFXI_DIR/$POL_DIR"/Tools*; do
+	if [ -e "$tools" ]; then
+		cp -rf "$tools" "$BACKUP_DIR/$POL_DIR/"
+	fi
+done
+
+# ----------------------------------------------------------------------
+# Generate installer
+# ----------------------------------------------------------------------
+
+cat > "$BACKUP_DIR/install.sh" <<'INSTALLER'
+#!/bin/bash
+
+set -e
+
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+readonly FFXI_DIR="$HOME/Games/steamapps/common/FFXIPAL"
+readonly PREFIX_DIR="$HOME/Games/steamapps/compatdata/230350/pfx"
+readonly REGISTRY_FILE="$PREFIX_DIR/system.reg"
+
+readonly POL_DIR="SquareEnix/FINAL FANTASY XI"
+readonly REGISTRY_BACKUP="$SCRIPT_DIR/ffxi-regedit-backup.reg"
+
+echo "Installing FFXI backup..."
+
+# ----------------------------------------------------------------------
+# Restore Windower
+# ----------------------------------------------------------------------
+
+if [ -d "$SCRIPT_DIR/Windower" ]; then
+	echo "Restoring Windower..."
+
+	cp -f "$SCRIPT_DIR/settings.xml" "$FFXI_DIR/" 2>/dev/null || true
+	cp -rf "$SCRIPT_DIR/Windower" "$FFXI_DIR/"
+fi
+
+# ----------------------------------------------------------------------
+# Restore USER macros/settings
+# ----------------------------------------------------------------------
+
+if [ -d "$SCRIPT_DIR/$POL_DIR/USER" ]; then
+	echo "Restoring USER..."
+
+	mkdir -p "$FFXI_DIR/$POL_DIR"
+
+	cp -rf \
+		"$SCRIPT_DIR/$POL_DIR/USER" \
+		"$FFXI_DIR/$POL_DIR/"
+fi
+
+# ----------------------------------------------------------------------
+# Restore Tools*
+# ----------------------------------------------------------------------
+
+if [ -d "$SCRIPT_DIR/$POL_DIR" ]; then
+	mkdir -p "$FFXI_DIR/$POL_DIR"
+
+	for tools in "$SCRIPT_DIR/$POL_DIR"/Tools*; do
+		if [ -e "$tools" ]; then
+			cp -rf "$tools" "$FFXI_DIR/$POL_DIR/"
+		fi
+	done
+
+fi
+
+echo -e "\n FFXI backup installation complete."
+INSTALLER
+
+chmod +x "$BACKUP_DIR/install.sh"
+
+# ----------------------------------------------------------------------
+# Create archive
+# ----------------------------------------------------------------------
+
+echo -e "\nEnter password for backup: \n"
+read PASSWORD
+clear
+
+7z a -p$PASSWORD "FFXI_BACKUP.7z" "$BACKUP_DIR"
+rm -rf "$BACKUP_DIR"
+
+echo -e "\n Backup created:"
+echo "$BACKUP_ARCHIVE"

@@ -127,6 +127,7 @@
 !.local/bin/audit-system
 !.local/bin/speedtest
 !.local/bin/vpn-speedtest
+!.local/bin/import-ovpn-folder
 !.local/bin/ISOFlash
 !.local/bin/nemo-terminal-run
 !.local/bin/appimage-handler.sh

@@ -1,0 +1,82 @@
+#!/bin/bash
+set -uo pipefail
+
+VPN_DIR="" USERNAME="" PASSWORD=""
+
+cleanup() { unset PASSWORD; }
+trap cleanup EXIT
+
+select_folder() {
+    VPN_DIR=$(yad --file --directory --title="Select OpenVPN profile folder" --width=800 --height=600) || exit 1
+    VPN_DIR=${VPN_DIR//$'\n'/}
+    [[ -n $VPN_DIR ]] || exit 1
+}
+
+get_credentials() {
+    local result
+    result=$(yad --form --title="VPN Credentials" --text="Enter VPN credentials:" --field="Username" --field="Password:H") || exit 1
+    IFS='|' read -r USERNAME PASSWORD _ <<< "$result"
+    [[ -n $USERNAME && -n $PASSWORD ]] || exit 1
+}
+
+profiles() {
+    find "$VPN_DIR" -type f -name "*.ovpn" -print | sort
+}
+
+show_profiles() {
+    local rows=() file
+    while IFS= read -r file; do
+        rows+=("$(basename "$file")" "$file")
+    done < <(profiles)
+
+    ((${#rows[@]})) || { zenity --error --title="Error" --text="No OpenVPN files found."; exit 1; }
+
+    yad --list --width=800 --height=400 --title="Profiles to import" \
+        --column="Profile" --column="Path" --no-selection "${rows[@]}" || exit 1
+}
+
+connection_exists() {
+    nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$1"
+}
+
+import_profiles() {
+    local imported=0 failed=0 file before after imported_name
+
+    while IFS= read -r file; do
+        before=$(nmcli -t -f UUID,NAME connection show)
+
+        if ! nmcli connection import type openvpn file "$file" >/dev/null 2>&1; then
+            ((failed++))
+            continue
+        fi
+
+        after=$(nmcli -t -f UUID,NAME connection show)
+
+        imported_name=$(comm -13 <(sort <<< "$before") <(sort <<< "$after") | cut -d: -f2)
+
+        if [[ -z $imported_name ]] || ! connection_exists "$imported_name"; then
+            ((failed++))
+            continue
+        fi
+
+        if nmcli connection modify "$imported_name" \
+            vpn.user-name "$USERNAME" \
+            +vpn.data "username=$USERNAME,password-flags=0" \
+            vpn.secrets "password=$PASSWORD"; then
+            ((imported++))
+        else
+            ((failed++))
+        fi
+    done < <(profiles)
+
+    zenity --info --title="Completed" --text="$imported profile(s) imported.\n$failed failed."
+}
+
+main() {
+    select_folder
+    get_credentials
+    show_profiles
+    import_profiles
+}
+
+main

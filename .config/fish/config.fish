@@ -5,7 +5,7 @@
 if status is-login; and test -z "$DISPLAY"; and test (tty) = "/dev/tty1"
     # Run Hyprland
     eval (ssh-agent -c) >/dev/null 2>&1
-    exec start-hyprland
+    dbus-run-session start-hyprland
 end
 
 ####################

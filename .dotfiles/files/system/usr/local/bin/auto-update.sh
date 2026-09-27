@@ -65,6 +65,9 @@ function clear_pacman_lock() {
     rm -f "$lock"
 }
 
+# Exit early if GameBoost is active
+[[ -f "/tmp/gameboost-running.flag" ]] && exit 0
+
 # Enforce 24h update interval
 exit_if_updated_recently
 
@@ -82,9 +85,6 @@ if command -v flatpak &>/dev/null; then
     echo "Updating Flatpaks..."
     flatpak update --noninteractive --assumeyes
 fi
-
-# Update local_pkgs
-/usr/local/bin/local_pkgs/main.sh
 
 # Create timestamp only if everything succeeded
 touch "$UPDATE_INTERVAL_FILE"

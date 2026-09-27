@@ -96,28 +96,5 @@ echo 'GETTY_TERM=linux' >> /etc/dinit.d/config/agetty-tty1.conf
 echo "GETTY_ARGS=\"--autologin $USERNAME\"" >> /etc/dinit.d/config/agetty-tty1.conf
 
 # Link user/system services
-link() {
-    local src="$1"
-    local dst="$2"
-    shift 2
-
-    mkdir -p "$dst"
-
-    for s; do
-        if [[ -e "$src/$s" ]]; then
-            ln -sf "$src/$s" "$dst/$s"
-        else
-            echo "Warning: missing service $src/$s"
-        fi
-    done
-}
-
-# User services
-link /etc/dinit.d/user \
-     "$HOME/.config/dinit.d/boot.d" \
-     "${USER_SERVICES[@]}"
-
-# System services
-link /etc/dinit.d \
-     /etc/dinit.d/boot.d \
-     "${SYSTEM_SERVICES[@]}"
+dinit_link_user "$USERNAME" "${USER_SERVICES[@]}"
+dinit_link_system "${SYSTEM_SERVICES[@]}"

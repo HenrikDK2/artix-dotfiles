@@ -37,8 +37,7 @@ dinit_link_user() {
     local user="$1"
     shift
 
-    local home
-    home=$(getent passwd "$user" | cut -d: -f6)
+    local home=$(getent passwd "$user" | cut -d: -f6)
 
     if [[ -z "$home" ]]; then
         echo "Error: unknown user $user"

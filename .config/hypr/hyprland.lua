@@ -207,7 +207,7 @@ hl.bind(mainMod .. " + 0", hl.dsp.workspace.toggle_special())
 hl.bind(mainMod .. " + SHIFT + 0", hl.dsp.window.move({ workspace = "special", follow = false }))
 
 -- Microphone control
-hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("$HOME/.dotfiles/scripts/mute_mic.sh"))
+hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("$HOME/.config/hypr/scripts/mute_mic.sh"))
 
 -- Mouse bindings
 hl.bind(mainMod .. " + mouse:272", hl.dsp.window.drag(), { mouse = true })
@@ -240,7 +240,7 @@ hl.bind("mouse:276", hl.dsp.send_shortcut(discord_shortcut), { ignore_mods = tru
 --------------------------------------------------------------------------------
 
 local rules = {
-	{ "float-zenity",             { class = "zenity" },                                                                           { float = true } }, 
+	{ "float-zenity",             { class = "zenity" },                                                                           { float = true } },
 	{ "float-yad",                { class = "yad" },                                                                              { float = true } },
 	{ "float-zenity",             { class = "com.gabm.satty" },                                                                   { float = true } },
 	{ "waybar-no-anim",           { class = "waybar" },                                                                           { no_anim = true } },

@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <linux/types.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -11,11 +12,21 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#ifndef SYS_close_range
+#define SYS_close_range 436 /* Linux 5.9+ */
+#endif
+
 #define MAX_WORKERS 8
-#define GETDENTS_BUF_SIZE (256 * 1024)
+#define MIN_PER_WORKER 64 /* don't spawn a thread for < this many PIDs */
+#define GETDENTS_BUF_SIZE (64 * 1024)
 #define CMD_BUF_SIZE 4096
-#define OUT_BUF_SIZE (1024 * 1024)
+#define OUT_BUF_SIZE (64 * 1024)
 #define MAX_PIDS 131072
+#define WORKER_STACK (64 * 1024)
+#define CLOSE_BATCH 128 /* fds held open before one close_range() */
+
+_Static_assert(OUT_BUF_SIZE >= 15 + 1 + CMD_BUF_SIZE + 1,
+               "output buffer must fit one worst-case entry");
 
 struct linux_dirent64 {
   uint64_t ino;
@@ -38,10 +49,23 @@ struct worker {
   size_t chunk;
   char *out;
   size_t outpos;
+  /* Batched-close state (single-threaded mode only; see main). */
+  int batch;
+  int lo;
+  int pending;
 };
 
-static inline void flush(struct worker *w) {
+static struct process items[MAX_PIDS];
+static char dirbuf[GETDENTS_BUF_SIZE] __attribute__((aligned(16)));
+static char outbufs[MAX_WORKERS][OUT_BUF_SIZE];
+static char stacks[MAX_WORKERS][WORKER_STACK] __attribute__((aligned(4096)));
+static pthread_mutex_t out_lock = PTHREAD_MUTEX_INITIALIZER;
+static int no_close_range; /* only touched in single-threaded mode */
+
+static void flush(struct worker *w) {
   size_t n = 0;
+
+  pthread_mutex_lock(&out_lock);
 
   while (n < w->outpos) {
     ssize_t r = write(1, w->out + n, w->outpos - n);
@@ -54,27 +78,31 @@ static inline void flush(struct worker *w) {
       break;
   }
 
+  pthread_mutex_unlock(&out_lock);
   w->outpos = 0;
 }
 
-static inline int is_pid(const char *s) {
-  unsigned char c = (unsigned char)*s;
+/* Close every fd we've been holding with one syscall. The fds are contiguous
+ * because we never close individually in batch mode and nothing else opens
+ * files while we run, so openat() hands out lo, lo+1, ... in order. */
+static void close_pending(struct worker *w) {
+  if (!w->pending)
+    return;
 
-  if (c < '0' || c > '9')
-    return 0;
+  int lo = w->lo, hi = w->lo + w->pending - 1;
 
-  while ((c = (unsigned char)*++s) >= '0' && c <= '9')
-    ;
+  w->pending = 0;
 
-  return c == '\0';
+  if (!no_close_range && syscall(SYS_close_range, lo, hi, 0) == 0)
+    return;
+
+  /* ENOSYS (old kernel) or EPERM (seccomp): fall back for good. */
+  no_close_range = 1;
+
+  for (int fd = lo; fd <= hi; ++fd)
+    close(fd);
 }
 
-/*
- * Reads /proc/<pid>/cmdline directly into the output buffer and does the
- * NUL -> space translation in place, instead of reading into a stack
- * buffer and then copying segment-by-segment into the output buffer.
- * This halves the number of passes over the cmdline bytes.
- */
 static inline void process_one(struct worker *w, const struct process *p) {
   char path[24];
 
@@ -83,20 +111,27 @@ static inline void process_one(struct worker *w, const struct process *p) {
 
   int fd = openat(w->procfd, path, O_RDONLY);
 
+  if (fd < 0 && errno == EMFILE && w->pending) {
+    /* Low RLIMIT_NOFILE: release the batch and retry rather than drop PIDs. */
+    close_pending(w);
+    fd = openat(w->procfd, path, O_RDONLY);
+  }
+
   if (fd < 0)
     return;
 
-  /* worst case this entry can add: pid + ' ' + CMD_BUF_SIZE + '\n' */
+  int batched = w->batch && (w->pending == 0 || fd == w->lo + w->pending);
+
+  if (batched) {
+    if (!w->pending)
+      w->lo = fd;
+    ++w->pending;
+  }
+
   size_t need = (size_t)p->len + 1 + CMD_BUF_SIZE + 1;
 
   if (need > OUT_BUF_SIZE - w->outpos)
     flush(w);
-
-  if (need > OUT_BUF_SIZE) {
-    /* Shouldn't happen given the constants above, but stay safe. */
-    close(fd);
-    return;
-  }
 
   size_t start = w->outpos;
 
@@ -111,10 +146,14 @@ static inline void process_one(struct worker *w, const struct process *p) {
     n = read(fd, dst, CMD_BUF_SIZE);
   } while (n < 0 && errno == EINTR);
 
-  close(fd);
+  if (batched) {
+    if (w->pending >= CLOSE_BATCH)
+      close_pending(w);
+  } else {
+    close(fd);
+  }
 
   if (n < 0) {
-    /* Roll back the pid/space we already wrote for this entry. */
     w->outpos = start;
     return;
   }
@@ -126,9 +165,6 @@ static inline void process_one(struct worker *w, const struct process *p) {
 
     w->outpos += (size_t)n;
 
-    /* cmdline is NUL-terminated, which we just turned into a trailing
-     * space; drop it so output matches the original "join with single
-     * spaces, no trailing space" behavior. */
     if (w->out[w->outpos - 1] == ' ')
       w->outpos--;
   }
@@ -140,12 +176,6 @@ static void *worker_main(void *arg) {
   struct worker *w = arg;
 
   for (;;) {
-    /* Claim work in chunks instead of one PID at a time to cut atomic
-     * RMW/cache-line-bounce traffic. Chunk size is sized per-run (see
-     * main) so this only kicks in once there's actually enough work to
-     * spread across threads several times over; for small process
-     * counts it degrades to chunk=1, i.e. the original fine-grained
-     * behavior, so small runs don't lose parallelism. */
     size_t base =
         atomic_fetch_add_explicit(w->next, w->chunk, memory_order_relaxed);
 
@@ -161,26 +191,16 @@ static void *worker_main(void *arg) {
       process_one(w, &w->items[i]);
   }
 
+  close_pending(w);
   flush(w);
   return NULL;
 }
 
 int main(void) {
-  int procfd = open("/proc", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  int procfd = open("/proc", O_RDONLY | O_DIRECTORY);
 
   if (procfd < 0)
     return 1;
-
-  struct process *items = malloc(sizeof(*items) * MAX_PIDS);
-
-  char *dirbuf = malloc(GETDENTS_BUF_SIZE);
-
-  if (!items || !dirbuf) {
-    free(items);
-    free(dirbuf);
-    close(procfd);
-    return 1;
-  }
 
   size_t count = 0;
 
@@ -193,10 +213,6 @@ int main(void) {
     if (n < 0) {
       if (errno == EINTR)
         continue;
-
-      free(items);
-      free(dirbuf);
-      close(procfd);
       return 1;
     }
 
@@ -206,14 +222,15 @@ int main(void) {
       if (!e->reclen)
         break;
 
-      if (count < MAX_PIDS && is_pid(e->name)) {
+      const char *s = e->name;
+      size_t len = 0;
 
-        size_t len = strlen(e->name);
+      while (s[len] >= '0' && s[len] <= '9')
+        ++len;
 
-        memcpy(items[count].pid, e->name, len + 1);
-
+      if (len && len < 16 && s[len] == '\0' && count < MAX_PIDS) {
+        memcpy(items[count].pid, s, len + 1);
         items[count].len = (uint8_t)len;
-
         ++count;
       }
 
@@ -224,69 +241,75 @@ int main(void) {
       break;
   }
 
-  free(dirbuf);
+  if (!count)
+    return 0;
 
-  long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+  size_t nworkers = 1;
 
-  if (cpus < 1)
-    cpus = 1;
+  if (count >= 2 * MIN_PER_WORKER) {
+    cpu_set_t set;
+    size_t cpus = 1;
 
-  size_t worker_count = (size_t)cpus;
+    if (sched_getaffinity(0, sizeof(set), &set) == 0)
+      cpus = (size_t)CPU_COUNT(&set);
 
-  if (worker_count > MAX_WORKERS)
-    worker_count = MAX_WORKERS;
+    nworkers = cpus;
 
-  if (worker_count > count)
-    worker_count = count;
+    if (nworkers > MAX_WORKERS)
+      nworkers = MAX_WORKERS;
 
-  if (!worker_count)
-    worker_count = 1;
+    if (nworkers > count / MIN_PER_WORKER)
+      nworkers = count / MIN_PER_WORKER;
 
-  pthread_t threads[MAX_WORKERS];
-  struct worker workers[MAX_WORKERS];
+    if (nworkers < 1)
+      nworkers = 1;
+  }
 
   _Atomic size_t next = 0;
-  size_t created = 0;
-
-  /* Aim for ~8 chunks per worker so load balances even if some PIDs are
-   * much more expensive than others (e.g. huge cmdlines), while cutting
-   * atomic traffic roughly (count / (worker_count * 8))-fold on large
-   * runs. Clamped to >= 1 so small process counts (fewer than
-   * worker_count * 8) fall back to one-PID-at-a-time claims, i.e. the
-   * original's full parallelism, instead of serializing onto one thread. */
-  size_t chunk = count / (worker_count * 8);
+  size_t chunk = count / (nworkers * 8);
 
   if (chunk < 1)
     chunk = 1;
 
-  for (; created < worker_count; ++created) {
-    workers[created].procfd = procfd;
-    workers[created].items = items;
-    workers[created].count = count;
-    workers[created].next = &next;
-    workers[created].chunk = chunk;
-    workers[created].outpos = 0;
-    workers[created].out = malloc(OUT_BUF_SIZE);
+  struct worker workers[MAX_WORKERS];
+  pthread_t threads[MAX_WORKERS];
 
-    if (!workers[created].out)
-      break;
-
-    if (pthread_create(&threads[created], NULL, worker_main,
-                       &workers[created])) {
-      free(workers[created].out);
-      workers[created].out = NULL;
-      break;
-    }
+  for (size_t i = 0; i < nworkers; ++i) {
+    workers[i].procfd = procfd;
+    workers[i].items = items;
+    workers[i].count = count;
+    workers[i].next = &next;
+    workers[i].chunk = chunk;
+    workers[i].out = outbufs[i];
+    workers[i].outpos = 0;
+    workers[i].batch = (nworkers == 1); /* fd numbers race across threads */
+    workers[i].lo = 0;
+    workers[i].pending = 0;
   }
+
+  size_t created = 0;
+
+  for (size_t i = 1; i < nworkers; ++i) {
+    pthread_attr_t attr;
+
+    pthread_attr_init(&attr);
+    /* Caller-supplied stack: no mmap, no guard-page mprotect, no munmap. */
+    pthread_attr_setstack(&attr, stacks[i], WORKER_STACK);
+
+    int rc = pthread_create(&threads[created], &attr, worker_main, &workers[i]);
+
+    pthread_attr_destroy(&attr);
+
+    if (rc)
+      break;
+
+    ++created;
+  }
+
+  worker_main(&workers[0]);
 
   for (size_t i = 0; i < created; ++i)
     pthread_join(threads[i], NULL);
 
-  for (size_t i = 0; i < created; ++i)
-    free(workers[i].out);
-
-  free(items);
-  close(procfd);
-
-  return 0;
+  _exit(0);
 }

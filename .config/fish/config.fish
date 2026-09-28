@@ -3,9 +3,16 @@
 ##################
 
 if status is-login; and test -z "$DISPLAY"; and test (tty) = "/dev/tty1"
-    # Run Hyprland
+    # Create log directory if it doesn't exist
+    mkdir -p ~/.cache/hyprland
+    set LOG_FILE ~/.cache/hyprland/startup.log
+    
+    # Reset the log file on each boot
+    truncate -s 0 $LOG_FILE
+    
+    # Run Hyprland and log output
     eval (ssh-agent -c) >/dev/null 2>&1
-    dbus-run-session start-hyprland
+    exec start-hyprland &> $LOG_FILE
 end
 
 ####################

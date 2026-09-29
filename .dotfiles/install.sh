@@ -28,6 +28,7 @@ SYSTEM_SERVICES=(
 	ufw
 	userspawn
 	auto-update
+	auto-fstrim
 	system-tuning
 	system-maintenance
 	gameboost

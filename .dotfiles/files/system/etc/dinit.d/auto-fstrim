@@ -1,8 +1,8 @@
 type          = process
-command       = /usr/local/bin/system-maintenance.sh
+command       = /usr/local/bin/auto-fstrim.sh
 log-type      = buffer
 waits-for     = login.target
 restart       = true
-restart-delay = 604800 # 1 week
+restart-delay = 1209600 # 2 weeks
 nice 		  = 19
 ioprio        = idle

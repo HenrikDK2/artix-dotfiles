@@ -53,8 +53,12 @@ fi
 
 
 section "Cleaning pacman cache"
-pacman -Scc --noconfirm >/dev/null 2>&1 || true
-echo "Done."
+if [ "$(du -sB1 /var/cache/pacman/pkg 2>/dev/null | awk '{print $1}')" -gt $((5 * 1024 * 1024 * 1024)) ]; then
+    pacman -Scc --noconfirm >/dev/null 2>&1 || true
+    echo "Done."
+else
+    echo "Cache is 5 GB or smaller. Skipping cleanup."
+fi
 
 
 if command -v flatpak >/dev/null 2>&1; then

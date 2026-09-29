@@ -94,3 +94,8 @@ echo "\"Minimal Boot\"    \"ro root=$ROOT_DEVICE\"" \
 
 # Configure rEFInd timeout
 sed -i 's/^timeout .*/timeout 3/' "$REFIND_CONF"
+
+# Configure theme
+cp -rf "$SCRIPT_DIR/files/system/boot/EFI/." /boot/EFI/
+chown -R root:root /boot/EFI
+echo "include themes/refind-theme/theme.conf" >> "$REFIND_CONF"

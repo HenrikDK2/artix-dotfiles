@@ -111,12 +111,11 @@ setup_profile() {
     chown -R "$user:$group" "$base"
 }
 
-killall firefox firefox-bin thunderbird thunderbird-bin 2>/dev/null
-
 while pgrep -x firefox >/dev/null ||
       pgrep -x firefox-bin >/dev/null ||
       pgrep -x thunderbird >/dev/null ||
       pgrep -x thunderbird-bin >/dev/null; do
+    killall firefox firefox-bin thunderbird thunderbird-bin 2>/dev/null
     sleep .5
 done
 

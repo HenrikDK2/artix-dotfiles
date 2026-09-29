@@ -23,7 +23,7 @@ LANG="da_DK.UTF-8"
 KEYMAP="dk"
 
 USER_SERVICES=( dbus wireplumber pipewire pipewire-pulse )
-SYSTEM_SERVICES=( NetworkManager userspawn ufw auto-update system-tuning gameboost )
+SYSTEM_SERVICES=( NetworkManager userspawn ufw auto-update system-tuning system-maintenance gameboost )
 
 INSTALLER_PACKAGES=( gum refind gdisk gawk xkeyboard-config )
 FLATPAK_PACKAGES=(

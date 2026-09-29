@@ -98,6 +98,9 @@ done
 ### CREATE OUTPUT ###
 #####################
 
+clear
+printf '%b\n\n' "${YELLOW}━━━ SYSTEM AUDIT ━━━${NC}"
+
 # Service failures
 failed_services=$(filter_dinit)
 format_section "Failed dinit services" "$failed_services"
@@ -135,5 +138,5 @@ fi
 
 # If issues are detected and they're new since last time, run in foreground
 if [[ $BACKGROUND == true && ${#NOTIFY_MESSAGES[@]} -gt 0 ]]; then
-    alacritty -e bash -c "\"$SCRIPT_PATH\"; exec \"$SHELL\" -i" &
+  DISABLE_FASTFETCH=1  alacritty -e bash -c "\"$SCRIPT_PATH\"; exec \"$SHELL\" -i" &
 fi

@@ -50,4 +50,4 @@ for script in $HOME/.config/hypr/login.d/*.sh; do
    "$script" &
 done
 
-audit-system -q
+audit-system -b

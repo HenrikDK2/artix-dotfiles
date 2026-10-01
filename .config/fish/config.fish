@@ -180,4 +180,10 @@ if test "$TERM" = "alacritty"; and string match -q "$HOME*" "$PWD"
 end
 
 ### Below is a clean way to redirect to another .exe in steam launch options
+
 # cmd=(%command%); cmd[-1]="/path/to/your/custom.exe"; "${cmd[@]}"
+
+# Possible to add envs like this:
+
+# cmd=(%command%); cmd[-1]="/path/to/your/custom.exe"; env PROTON_LOG=1 "${cmd[@]}"
+

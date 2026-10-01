@@ -131,6 +131,8 @@
 !.local/bin/ISOFlash
 !.local/bin/nemo-terminal-run
 !.local/bin/appimage-handler.sh
+!.local/bin/zeditor
+
 
 !.local/share/mime
 !.local/share/mime/application

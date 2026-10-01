@@ -1,0 +1,7 @@
+#!/bin/sh
+
+if [ -f "/usr/bin/zed" ]; then
+	exec zeditor "$@"
+else
+    exec flatpak run dev.zed.Zed "$@"
+fi

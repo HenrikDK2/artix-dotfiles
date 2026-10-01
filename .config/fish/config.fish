@@ -142,7 +142,9 @@ fish_add_path -p /home/linuxbrew/.linuxbrew/bin
 
 alias upgraded='grep -i upgraded /var/log/pacman.log'
 alias installed='grep -i installed /var/log/pacman.log'
+
 alias zed='command -v zeditor >/dev/null && zeditor || flatpak run dev.zed.Zed'
+
 alias build='npm run build'
 alias start='npm run start || npm run dev'
 alias preview='npm run preview'

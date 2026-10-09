@@ -123,6 +123,8 @@ PACKAGES=(
 
     # Fonts & icons
     "papirus-icon-theme"
+    "noto-fonts-emoji"
+    "noto-fonts"
     "cantarell-fonts"
     "otf-font-awesome"
     "ttf-jetbrains-mono"
